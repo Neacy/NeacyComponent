@@ -199,7 +199,7 @@ class ComponentPlugin extends Transform implements Plugin<Project> {
                     ClassReader classReader = new ClassReader(IOUtils.toByteArray(inputStream))
                     ClassWriter classWriter = new ClassWriter(classReader, ClassWriter.COMPUTE_MAXS)
                     ComponentInsertVisitor visitor = new ComponentInsertVisitor(Opcodes.ASM5, classWriter)
-                    visitor.setData(null, components)// 这边第一个参数没有获取到直接传null
+                    visitor.setData(components)// 这边第一个参数没有获取到直接传null
                     classReader.accept(visitor, ClassReader.EXPAND_FRAMES)
 
                     byte[] code = classWriter.toByteArray()

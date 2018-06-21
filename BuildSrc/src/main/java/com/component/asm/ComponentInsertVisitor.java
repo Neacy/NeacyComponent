@@ -24,11 +24,9 @@ public class ComponentInsertVisitor extends ClassVisitor {
         super(i, classVisitor);
     }
 
-    private File componentFile;
     private List<ComponentVisitor> components;
 
-    public void setData(File componentFile, List<ComponentVisitor> components) {
-        this.componentFile = componentFile;
+    public void setData(List<ComponentVisitor> components) {
         this.components = components;
     }
 
