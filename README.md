@@ -18,7 +18,7 @@ public class BComponent implements IComponent
 2.实现数据传递
 
 ```
-ComponentController.getComponentByName("b").startComponent(null);// 之间执行module b中的BComponent  
+ComponentController.getComponentByName("b").startComponent(null);// 直接执行module b中的BComponent  
 
 // 在module a中调用app模块中的 AppComponent并回调数据
 Map<String, Object> p = new HashMap<>();  
