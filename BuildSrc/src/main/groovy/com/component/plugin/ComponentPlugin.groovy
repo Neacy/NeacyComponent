@@ -1,14 +1,6 @@
 package com.component.plugin
 
-import com.android.build.api.transform.Context
-import com.android.build.api.transform.DirectoryInput
-import com.android.build.api.transform.Format
-import com.android.build.api.transform.JarInput
-import com.android.build.api.transform.QualifiedContent
-import com.android.build.api.transform.Transform
-import com.android.build.api.transform.TransformException
-import com.android.build.api.transform.TransformInput
-import com.android.build.api.transform.TransformOutputProvider
+import com.android.build.api.transform.*
 import com.android.build.gradle.AppExtension
 import com.android.build.gradle.internal.pipeline.TransformManager
 import com.component.asm.ComponentInsertVisitor
@@ -92,12 +84,29 @@ class ComponentPlugin extends Transform implements Plugin<Project> {
         return !name.contains("android/support")
     }
 
+    /**
+     * 扫描所有的class文件
+     */
+    private void scanClassFiles(final byte[] b) {
+        ClassReader cr = new ClassReader(b)
+        ClassWriter cw = new ClassWriter(cr, 0)
+        ComponentVisitor visitor = new ComponentVisitor(Opcodes.ASM5, cw)
+        cr.accept(visitor, ClassReader.EXPAND_FRAMES)
+
+        if (visitor.annotationVisitor != null && visitor.annotationVisitor.annotationName != null) {
+            components.add(visitor)// 加入列表
+        }
+        if (visitor.routerAnnotationVisitor != null && visitor.routerAnnotationVisitor.annotationName != null) {
+            routers.add(visitor)// 加入路由列表
+        }
+    }
+
+    List<ComponentVisitor> components = new ArrayList<>() // 临时存放visitors  模块
+    List<ComponentVisitor> routers = new ArrayList<>() // 临时存放visitors 路由
+
     @Override
     void transform(Context context, Collection<TransformInput> inputs, Collection<TransformInput> referencedInputs, TransformOutputProvider outputProvider, boolean isIncremental) throws IOException, TransformException, InterruptedException {
         project.logger.error("========== 开始 transform ==========")
-        List<ComponentVisitor> components = new ArrayList<>() // 临时存放visitors  模块
-        List<ComponentVisitor> routers = new ArrayList<>() // 临时存放visitors 路由
-
         File jarTargetComponent = null// 要插入的Manager所在的jar包
         def destTarget// 最终的jar对应的inputs
 
@@ -112,17 +121,7 @@ class ComponentPlugin extends Transform implements Plugin<Project> {
                     directoryInput.file.eachFileRecurse { File file ->
                         project.logger.error("==== file = " + file.absolutePath)
                         if (!file.isDirectory() && notRClass(file.name) && file.name.endsWith(".class")) {
-                            ClassReader cr = new ClassReader(file.bytes)
-                            ClassWriter cw = new ClassWriter(cr, 0)
-                            ComponentVisitor visitor = new ComponentVisitor(Opcodes.ASM5, cw)
-                            cr.accept(visitor, ClassReader.EXPAND_FRAMES)
-
-                            if (visitor.annotationVisitor != null && visitor.annotationVisitor.annotationName != null) {
-                                components.add(visitor)// 加入列表
-                            }
-                            if (visitor.routerAnnotationVisitor != null && visitor.routerAnnotationVisitor.annotationName != null) {
-                                routers.add(visitor)// 加入路由列表
-                            }
+                            scanClassFiles(file.bytes)
                         }
                     }
                 }
@@ -148,23 +147,13 @@ class ComponentPlugin extends Transform implements Plugin<Project> {
                         println "==== jarInput class entryName :" + entryName
                         if (entryName.endsWith(".class") && notRClass(entryName) && notSupport(entryName)) {
                             InputStream inputStream = jarFile.getInputStream(jarEntry)
-                            ClassReader classReader = new ClassReader(IOUtils.toByteArray(inputStream))
-                            ClassWriter classWriter = new ClassWriter(classReader, ClassWriter.COMPUTE_MAXS)
-                            ComponentVisitor visitor = new ComponentVisitor(Opcodes.ASM5, classWriter)
-                            classReader.accept(visitor, ClassReader.EXPAND_FRAMES)
+                            scanClassFiles(IOUtils.toByteArray(inputStream))
 
                             if (entryName.endsWith(componentConfig.insertClassName)
                                     || entryName.endsWith(componentConfig.routerClassName)) {
                                 jarTargetComponent = jarInput.file
                             }
-
-                            if (visitor.annotationVisitor != null && visitor.annotationVisitor.annotationName != null) {
-                                components.add(visitor)// 加入列表
-                            }
-
-                            if (visitor.routerAnnotationVisitor != null && visitor.routerAnnotationVisitor.annotationName != null) {
-                                routers.add(visitor)// 加入路由列表
-                            }
+                            inputStream.close()
                         }
                     }
                 }
@@ -194,8 +183,8 @@ class ComponentPlugin extends Transform implements Plugin<Project> {
                 String entryName = jarEntry.getName()
                 ZipEntry zipEntry = new ZipEntry(entryName)
                 jarOutputStream.putNextEntry(zipEntry)
+                InputStream inputStream = jarFile.getInputStream(jarEntry)
                 if (entryName.endsWith(componentConfig.insertClassName)) {// 插入模块化代码
-                    InputStream inputStream = jarFile.getInputStream(jarEntry)
                     ClassReader classReader = new ClassReader(IOUtils.toByteArray(inputStream))
                     ClassWriter classWriter = new ClassWriter(classReader, ClassWriter.COMPUTE_MAXS)
                     ComponentInsertVisitor visitor = new ComponentInsertVisitor(Opcodes.ASM5, classWriter)
@@ -204,9 +193,7 @@ class ComponentPlugin extends Transform implements Plugin<Project> {
 
                     byte[] code = classWriter.toByteArray()
                     jarOutputStream.write(code)
-                    inputStream.close()
                 } else if (entryName.endsWith(componentConfig.routerClassName)) {// 插入路由代码
-                    InputStream inputStream = jarFile.getInputStream(jarEntry)
                     ClassReader classReader = new ClassReader(IOUtils.toByteArray(inputStream))
                     ClassWriter classWriter = new ClassWriter(classReader, ClassWriter.COMPUTE_MAXS)
                     ComponentRouterVisitor visitor = new ComponentRouterVisitor(Opcodes.ASM5, classWriter)
@@ -215,18 +202,18 @@ class ComponentPlugin extends Transform implements Plugin<Project> {
 
                     byte[] code = classWriter.toByteArray()
                     jarOutputStream.write(code)
-                    inputStream.close()
                 } else {// 不需要处理的类直接放回jar包
-                    InputStream inputStream = jarFile.getInputStream(jarEntry)
                     jarOutputStream.write(IOUtils.toByteArray(inputStream))
-                    inputStream.close()
                 }
+                inputStream.close()
             }
             jarOutputStream.close()
             fos.close()
             jarFile.close()
 
-            FileUtils.copyFile(tempFile, destTarget)
+            if (destTarget != null) {
+                FileUtils.copyFile(tempFile, destTarget)
+            }
             if (tempFile != null) {// 写成inputs之后就删除临时的文件
                 tempFile.delete()
             }
