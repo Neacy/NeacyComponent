@@ -3,6 +3,7 @@ package com.component.plugin
 import com.android.build.api.transform.*
 import com.android.build.gradle.AppExtension
 import com.android.build.gradle.internal.pipeline.TransformManager
+import com.component.asm.ComponentInitVisitor
 import com.component.asm.ComponentInsertVisitor
 import com.component.asm.ComponentRouterVisitor
 import com.component.asm.ComponentVisitor
@@ -35,6 +36,9 @@ class ComponentPlugin extends Transform implements Plugin<Project> {
         this.project = project
 
         project.extensions.create(EXTENSION_NAME, ComponentExtension)
+//        project.task("hello", type: HelloTask)
+
+//        project.extensions.create(EXTENSION_NAME, ComponentExtension)
         project.afterEvaluate {
             componentConfig = project.extensions.findByName(EXTENSION_NAME) as ComponentExtension
             project.logger.error("====== componentConfig = " + componentConfig.insertClassName)
@@ -87,7 +91,7 @@ class ComponentPlugin extends Transform implements Plugin<Project> {
     /**
      * 扫描所有的class文件
      */
-    private void scanClassFiles(final byte[] b) {
+    private boolean scanClassFiles(final byte[] b) {
         ClassReader cr = new ClassReader(b)
         ClassWriter cw = new ClassWriter(cr, 0)
         ComponentVisitor visitor = new ComponentVisitor(Opcodes.ASM5, cw)
@@ -99,6 +103,63 @@ class ComponentPlugin extends Transform implements Plugin<Project> {
         if (visitor.routerAnnotationVisitor != null && visitor.routerAnnotationVisitor.annotationName != null) {
             routers.add(visitor)// 加入路由列表
         }
+
+        // 返回是否需要解析Intent数据
+        return visitor.isContainIntentData
+    }
+
+    /**
+     * 往目录中的class文件插入相对应的getIntent代码
+     */
+    private void insertClassFileForDirectory(final File file) {
+        // 需要将生产的新class覆盖本地的class文件然后再输出
+        byte[] code = getClassByte(file.bytes)
+        FileOutputStream fos = new FileOutputStream(file.parentFile.absolutePath + File.separator + file.name)
+        fos.write(code)
+        fos.close()
+    }
+
+    private byte[] getClassByte(byte[] b) {
+        ClassReader cr = new ClassReader(b)
+        ClassWriter cw = new ClassWriter(cr, ClassWriter.COMPUTE_MAXS)
+        ComponentInitVisitor visitor = new ComponentInitVisitor(Opcodes.ASM5, cw)
+        cr.accept(visitor, ClassReader.EXPAND_FRAMES)
+
+        // 需要将生产的新class覆盖本地的class文件然后再输出
+        return cw.toByteArray()
+    }
+
+    /**
+     * 往jar目录的class中插入getIntent代码
+     */
+    private File insertClassFileForJar(final File file) {
+        File tempFile = new File(file.getParent() + File.separator + "component_intent.jar")
+        if (tempFile.exists()) {
+            tempFile.delete()
+        }
+        FileOutputStream fos = new FileOutputStream(tempFile)
+        JarOutputStream jarOutputStream = new JarOutputStream(fos)
+
+        JarFile jarFile = new JarFile(file)
+        Enumeration enumeration = jarFile.entries()
+        while (enumeration.hasMoreElements()) {
+            JarEntry jarEntry = enumeration.nextElement()
+            String entryName = jarEntry.getName()
+            ZipEntry zipEntry = new ZipEntry(entryName)
+            jarOutputStream.putNextEntry(zipEntry)
+            InputStream inputStream = jarFile.getInputStream(jarEntry)
+            if (entryName.endsWith(".class") && notRClass(entryName) && notSupport(entryName)) {
+                byte[] code = getClassByte(IOUtils.toByteArray(inputStream))
+                jarOutputStream.write(code)
+                inputStream.close()
+            } else {
+                jarOutputStream.write(IOUtils.toByteArray(inputStream))
+            }
+        }
+        jarOutputStream.close()
+        fos.close()
+        jarFile.close()
+        return tempFile
     }
 
     List<ComponentVisitor> components = new ArrayList<>() // 临时存放visitors  模块
@@ -107,6 +168,7 @@ class ComponentPlugin extends Transform implements Plugin<Project> {
     @Override
     void transform(Context context, Collection<TransformInput> inputs, Collection<TransformInput> referencedInputs, TransformOutputProvider outputProvider, boolean isIncremental) throws IOException, TransformException, InterruptedException {
         project.logger.error("========== 开始 transform ==========")
+        long start = System.currentTimeMillis()
         File jarTargetComponent = null// 要插入的Manager所在的jar包
         def destTarget// 最终的jar对应的inputs
 
@@ -121,7 +183,10 @@ class ComponentPlugin extends Transform implements Plugin<Project> {
                     directoryInput.file.eachFileRecurse { File file ->
                         project.logger.error("==== file = " + file.absolutePath)
                         if (!file.isDirectory() && notRClass(file.name) && file.name.endsWith(".class")) {
-                            scanClassFiles(file.bytes)
+                            boolean isFindSuccess = scanClassFiles(file.bytes)
+                            if (isFindSuccess) {// 如果成功找到  那么处理相关的Intent上的数据
+                                insertClassFileForDirectory(file)
+                            }
                         }
                     }
                 }
@@ -134,33 +199,46 @@ class ComponentPlugin extends Transform implements Plugin<Project> {
             project.logger.error("------ 开始遍历JarInput ------ " + input.jarInputs.size())
             input.jarInputs.each { JarInput jarInput ->
                 def path = jarInput.file.absolutePath
-                project.logger.error("=== JarInput Path = " + path)
+                if (!path.startsWith("android")) {
+                    project.logger.error("=== JarInput Path = " + path)
+                }
                 def jarName = jarInput.name
                 project.logger.error("=== jarName = " + jarName)
                 def md5Name = DigestUtils.md5Hex(path)
+                def tempJarFile = null
                 if (path.endsWith(".jar")) {
                     JarFile jarFile = new JarFile(jarInput.file)
                     Enumeration enumeration = jarFile.entries()
+                    boolean isFindSuccess = false
                     while (enumeration.hasMoreElements()) {
                         JarEntry jarEntry = enumeration.nextElement()
                         String entryName = jarEntry.getName()
-                        println "==== jarInput class entryName :" + entryName
                         if (entryName.endsWith(".class") && notRClass(entryName) && notSupport(entryName)) {
                             InputStream inputStream = jarFile.getInputStream(jarEntry)
-                            scanClassFiles(IOUtils.toByteArray(inputStream))
-
+                            boolean isFindSuccessTemp = scanClassFiles(IOUtils.toByteArray(inputStream))
                             if (entryName.endsWith(componentConfig.insertClassName)
                                     || entryName.endsWith(componentConfig.routerClassName)) {
                                 jarTargetComponent = jarInput.file
                             }
+                            if (isFindSuccessTemp) {
+                                isFindSuccess = isFindSuccessTemp
+                            }
                             inputStream.close()
                         }
+                    }
+                    if (isFindSuccess) {// 如果说这个jar包存在需要getIntent进行解析的代码
+                        tempJarFile = insertClassFileForJar(jarInput.file)
                     }
                 }
 
                 def dest = outputProvider.getContentLocation(jarName + md5Name, jarInput.getContentTypes(), jarInput.getScopes(), Format.JAR)
-                if (jarTargetComponent == null) {// 如果并不是insertClassName/routerClassName所在的jar 那么直接写入outputs
-                    FileUtils.copyFile(jarInput.file, dest)
+                if (jarTargetComponent == null) {
+                    // 如果并不是insertClassName/routerClassName所在的jar 那么直接写入outputs
+                    // 如果中间做扫描Intent代码插入的话  那么写入的jar包是tempJarFile
+                    FileUtils.copyFile(tempJarFile != null ? tempJarFile : jarInput.file, dest)
+                    if (tempJarFile != null) {
+                        tempJarFile.delete()
+                    }
                 } else {
                     destTarget = dest
                 }
@@ -169,7 +247,7 @@ class ComponentPlugin extends Transform implements Plugin<Project> {
 
         if (jarTargetComponent != null) {
             // 将jar包解压后重新打包的路径
-            File tempFile = new File(jarTargetComponent.getParent() + File.separator + "neacy_temp.jar")
+            File tempFile = new File(jarTargetComponent.getParent() + File.separator + "component_temp.jar")
             if (tempFile.exists()) {
                 tempFile.delete()
             }
@@ -218,6 +296,7 @@ class ComponentPlugin extends Transform implements Plugin<Project> {
                 tempFile.delete()
             }
         }
-        project.logger.error("========== 结束 transform  ==========")
+        long costTime = System.currentTimeMillis() - start
+        project.logger.error("========== 结束 transform 预计耗时 = $costTime ms ========== ")
     }
 }

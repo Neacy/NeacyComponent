@@ -79,7 +79,57 @@ Bundle args = new Bundle();
 args.putString("key", "AActivity");  
 RouterController.startRouter(AActivity.this, "/activity/b", args);// 跳转到BActivity并携带bundle参数  
 ```
-3.路由原理  
+3.Intent解析：不在为getIntent()烦恼了
+
+```
+@NeacyParam("string_key")
+public String result_string;
+
+@NeacyParam("int_key")
+public int result_int;
+
+@NeacyParam("boolean_key")
+public boolean result_boolean;
+
+@NeacyParam("long_key")
+public long result_long;
+
+@NeacyParam("double_key")
+public double result_double;
+
+@NeacyParam("float_key")
+public float result_float;
+
+@NeacyParam("parcelable_key")
+public TestParcelable testParcelable;
+
+@NeacyInitMethod
+@Override
+protected void onCreate(Bundle savedInstanceState) {
+    、、、
+}
+```
+目前支持以上7种数据传递，我们可以看一眼生成的代码：
+
+```
+@NeacyInitMethod
+protected void onCreate(Bundle savedInstanceState) {
+    this.result_int = this.getIntent().getIntExtra("int_key", 0);
+    this.result_float = this.getIntent().getFloatExtra("float_key", 0.0F);
+    this.result_boolean = this.getIntent().getBooleanExtra("boolean_key", false);
+    this.result_long = this.getIntent().getLongExtra("long_key", 0L);
+    this.result_double = this.getIntent().getDoubleExtra("double_key", 0.0D);
+    this.result_string = this.getIntent().getStringExtra("string_key");
+    this.testParcelable = (TestParcelable)this.getIntent().getParcelableExtra("parcelable_key");
+    super.onCreate(savedInstanceState);
+
+    、、、
+}
+```
+很明显的看出来直接往NeacyInitMethod注解的方法中直接插入相关代码
+
+
+4.路由原理
 同上也是通过gradle插件在编译的时候注入路由表，从而根据key直接实现跳转，代码如下：  
 
 ```
