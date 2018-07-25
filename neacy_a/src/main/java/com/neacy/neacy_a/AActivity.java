@@ -27,6 +27,21 @@ public class AActivity extends AppCompatActivity {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.a_layout);
 
+        findViewById(R.id.id_kotlin_click).setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                Bundle args = new Bundle();
+                args.putString("string_key", "AActivity");
+                args.putInt("int_key", 100);
+                args.putBoolean("boolean_key", true);
+                args.putLong("long_key", System.currentTimeMillis());
+                args.putDouble("double_key", 6688.9999);
+                args.putFloat("float_key", 9.0f);
+                args.putParcelable("parcelable_key", new TestParcelable("Jayuchou"));
+                RouterController.startRouter(AActivity.this, "/activity/kotlin", args);
+            }
+        });
+
         findViewById(R.id.id_AAAAA).setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
@@ -38,7 +53,7 @@ public class AActivity extends AppCompatActivity {
                 args.putDouble("double_key", 6688.9999);
                 args.putFloat("float_key", 9.0f);
                 args.putParcelable("parcelable_key", new TestParcelable("Jayuchou"));
-                RouterController.startRouter(AActivity.this, "/activity/app", args);
+                RouterController.startRouter(AActivity.this, "/activity/b", args);
             }
         });
 
@@ -46,6 +61,13 @@ public class AActivity extends AppCompatActivity {
             @Override
             public void onClick(View v) {
                 ComponentController.getComponentByName("b").startComponent(null);
+            }
+        });
+
+        findViewById(R.id.id_kotlin).setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                ComponentController.getComponentByName("kotlin").startComponent(null);
             }
         });
 

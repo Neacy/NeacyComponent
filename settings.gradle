@@ -1,1 +1,1 @@
-include ':app', ':neacy_a', ':neacy_b', ':neacy', ':BuildSrc'
+include ':app', ':neacy_a', ':neacy_b', ':neacy', ':BuildSrc', ':neacy_kotlin'
